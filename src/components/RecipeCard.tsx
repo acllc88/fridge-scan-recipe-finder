@@ -43,7 +43,7 @@ export default function RecipeCard({ recipe, matchPercentage, missingIngredients
           onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400'; }} />
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
         
-        {/* Favorite Button - Top Left */}
+        {/* Favorite Button - Top Left corner */}
         <button onClick={handleFavorite}
           className={`absolute top-3 left-3 z-10 p-2.5 rounded-full shadow-lg transition-all transform hover:scale-110 ${isFav ? 'bg-red-500 text-white' : 'bg-white/80 backdrop-blur-sm text-gray-500 hover:text-red-500'}`}>
           <Heart className={`w-5 h-5 ${isFav ? 'fill-current' : ''}`} />

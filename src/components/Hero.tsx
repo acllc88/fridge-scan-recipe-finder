@@ -26,9 +26,11 @@ export function Hero({ onStartScan, onManualPick, onSweetsMode, onNavigate }: He
       <header className="bg-gradient-to-l from-red-700 via-red-600 to-green-700 text-white py-4 px-6 shadow-lg">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
-              <span className="text-2xl">🇲🇦</span>
-            </div>
+            <img 
+              src="https://i.ibb.co/cSXCG569/aclogostudio-design-1561.png" 
+              alt="المطبخ المغربي - شعار التطبيق"
+              className="w-14 h-14 rounded-full shadow-lg border-2 border-white/30"
+            />
             <div>
               <h1 className="text-2xl font-bold">المطبخ المغربي</h1>
               <p className="text-sm text-white/80">اكتشف وصفات من ثلاجتك</p>

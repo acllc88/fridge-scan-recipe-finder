@@ -88,7 +88,7 @@ export function RecipeDetail({ recipe, selectedIngredients, onBack }: RecipeDeta
         </button>
 
         <button onClick={handleToggleFavorite}
-          className={`absolute top-4 left-4 z-10 flex items-center gap-2 px-5 py-3 rounded-full shadow-xl transition-all transform hover:scale-105 ${isFav ? 'bg-red-500 text-white shadow-red-500/40' : 'bg-white/90 backdrop-blur-md text-gray-600 hover:text-red-500'}`}>
+          className={`absolute top-16 right-4 z-10 flex items-center gap-2 px-5 py-3 rounded-full shadow-xl transition-all transform hover:scale-105 ${isFav ? 'bg-red-500 text-white shadow-red-500/40' : 'bg-white/90 backdrop-blur-md text-gray-600 hover:text-red-500'}`}>
           <Heart className={`w-6 h-6 ${isFav ? 'fill-current' : ''}`} />
           <span className="font-bold text-sm">{isFav ? 'في المفضلة ❤️' : 'أضف للمفضلة'}</span>
         </button>
