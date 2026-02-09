@@ -11,10 +11,9 @@ interface ImageScannerProps {
 
 type ScanStep = 'choose' | 'camera' | 'scanning' | 'results';
 
-// Sweets-specific ingredients
 const sweetsIngredients = [
-  'طحين', 'سكر', 'عسل', 'لوز', 'جوز', 'سمسم', 'زبدة', 'بيض', 
-  'قرفة', 'ماء زهر', 'ماء ورد', 'زيت', 'خميرة', 'سميد', 
+  'طحين', 'سكر', 'عسل', 'لوز', 'جوز', 'سمسم', 'زبدة', 'بيض',
+  'قرفة', 'ماء زهر', 'ماء ورد', 'زيت', 'خميرة', 'سميد',
   'تمر', 'زبيب', 'جوز الهند', 'فول سوداني', 'كاكاو', 'حليب',
   'كريمة', 'فانيلا', 'زعفران', 'يانسون', 'حبة حلوة'
 ];
@@ -27,7 +26,9 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
   const [scanStatus, setScanStatus] = useState('');
   const [showAddIngredient, setShowAddIngredient] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -35,37 +36,117 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
 
   const ingredientsList = sweetsMode ? sweetsIngredients : allIngredients;
 
+  // Stop camera and release all tracks
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      const tracks = streamRef.current.getTracks();
+      tracks.forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
       streamRef.current = null;
     }
-  }, []);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setStep('camera');
-    } catch (error) {
-      console.error('خطأ في الوصول للكاميرا:', error);
-      alert('لا يمكن الوصول للكاميرا. يرجى السماح بالوصول أو رفع صورة بدلاً من ذلك.');
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+      videoRef.current.load();
     }
+    setCameraReady(false);
   }, []);
 
+  // Start camera with multiple fallback strategies
+  const startCamera = useCallback(async () => {
+    setCameraError(null);
+    setCameraReady(false);
+    setStep('camera');
+
+    // Small delay to ensure video element is mounted
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const constraints = [
+      // Try 1: Rear camera with ideal resolution
+      { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      // Try 2: Rear camera simple
+      { video: { facingMode: 'environment' }, audio: false },
+      // Try 3: Any camera with resolution
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      // Try 4: Any camera at all
+      { video: true, audio: false },
+    ];
+
+    let stream: MediaStream | null = null;
+
+    for (const constraint of constraints) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraint);
+        if (stream) break;
+      } catch (err) {
+        console.log('Constraint failed, trying next:', err);
+        continue;
+      }
+    }
+
+    if (!stream) {
+      setCameraError('لا يمكن الوصول للكاميرا. تأكد من السماح بالوصول للكاميرا في إعدادات المتصفح.');
+      return;
+    }
+
+    streamRef.current = stream;
+
+    if (videoRef.current) {
+      const video = videoRef.current;
+      
+      // Remove old source
+      video.srcObject = null;
+      
+      // Set new stream
+      video.srcObject = stream;
+      video.setAttribute('autoplay', '');
+      video.setAttribute('playsinline', '');
+      video.setAttribute('muted', '');
+      video.muted = true;
+      
+      // Wait for metadata then play
+      video.onloadedmetadata = () => {
+        video.play()
+          .then(() => {
+            setCameraReady(true);
+            setCameraError(null);
+          })
+          .catch((err) => {
+            console.error('Video play failed:', err);
+            // Try playing on user interaction
+            setCameraReady(true);
+          });
+      };
+
+      video.onerror = () => {
+        setCameraError('حدث خطأ أثناء تشغيل الكاميرا. حاول مرة أخرى.');
+      };
+
+      // Fallback: if metadata doesn't load in 3 seconds
+      setTimeout(() => {
+        if (!cameraReady && videoRef.current && streamRef.current) {
+          videoRef.current.play().catch(() => {});
+          setCameraReady(true);
+        }
+      }, 3000);
+    }
+  }, [cameraReady]);
+
+  // Cleanup on unmount
   useEffect(() => {
-    return () => stopCamera();
-  }, [stopCamera]);
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
 
   const analyzeImageColors = useCallback((imageData: ImageData): string[] => {
     const detected: Set<string> = new Set();
     const { data, width, height } = imageData;
-    
+
     const colorCounts: { [key: string]: number } = {
       red: 0, green: 0, yellow: 0, orange: 0, brown: 0,
       white: 0, beige: 0, purple: 0, pink: 0, black: 0, golden: 0
@@ -93,31 +174,14 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
     const threshold = totalPixels * 0.02;
 
     if (sweetsMode) {
-      // Detect sweets ingredients
-      if (colorCounts.white > threshold * 2) {
-        detected.add('طحين');
-        detected.add('سكر');
-      }
-      if (colorCounts.brown > threshold) {
-        detected.add('قرفة');
-        detected.add('تمر');
-      }
-      if (colorCounts.beige > threshold) {
-        detected.add('لوز');
-        detected.add('سمسم');
-      }
-      if (colorCounts.golden > threshold) {
-        detected.add('عسل');
-        detected.add('زبدة');
-      }
-      if (colorCounts.yellow > threshold) {
-        detected.add('بيض');
-      }
-      // Always add common sweets ingredients
+      if (colorCounts.white > threshold * 2) { detected.add('طحين'); detected.add('سكر'); }
+      if (colorCounts.brown > threshold) { detected.add('قرفة'); detected.add('تمر'); }
+      if (colorCounts.beige > threshold) { detected.add('لوز'); detected.add('سمسم'); }
+      if (colorCounts.golden > threshold) { detected.add('عسل'); detected.add('زبدة'); }
+      if (colorCounts.yellow > threshold) { detected.add('بيض'); }
       detected.add('ماء زهر');
       detected.add('زيت');
     } else {
-      // Regular fridge ingredients
       if (colorCounts.red > threshold) {
         detected.add('طماطم');
         if (colorCounts.red > threshold * 2) detected.add('فلفل حلو');
@@ -127,35 +191,14 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
         detected.add('بقدونس');
         if (colorCounts.green > threshold * 1.5) detected.add('كوسة');
       }
-      if (colorCounts.yellow > threshold) {
-        detected.add('ليمون مصير');
-        detected.add('بصل');
-      }
-      if (colorCounts.orange > threshold) {
-        detected.add('جزر');
-      }
-      if (colorCounts.brown > threshold) {
-        detected.add('بصل');
-        detected.add('بطاطس');
-      }
-      if (colorCounts.white > threshold * 2) {
-        detected.add('ثوم');
-        detected.add('بيض');
-      }
-      if (colorCounts.purple > threshold) {
-        detected.add('باذنجان');
-      }
-      if (colorCounts.beige > threshold || colorCounts.pink > threshold) {
-        detected.add('دجاج');
-      }
-      if (colorCounts.black > threshold * 0.5) {
-        detected.add('زيتون');
-      }
-      if (detected.size > 2) {
-        detected.add('كمون');
-        detected.add('بابريكا');
-        detected.add('زيت زيتون');
-      }
+      if (colorCounts.yellow > threshold) { detected.add('ليمون مصير'); detected.add('بصل'); }
+      if (colorCounts.orange > threshold) { detected.add('جزر'); }
+      if (colorCounts.brown > threshold) { detected.add('بصل'); detected.add('بطاطس'); }
+      if (colorCounts.white > threshold * 2) { detected.add('ثوم'); detected.add('بيض'); }
+      if (colorCounts.purple > threshold) { detected.add('باذنجان'); }
+      if (colorCounts.beige > threshold || colorCounts.pink > threshold) { detected.add('دجاج'); }
+      if (colorCounts.black > threshold * 0.5) { detected.add('زيتون'); }
+      if (detected.size > 2) { detected.add('كمون'); detected.add('بابريكا'); detected.add('زيت زيتون'); }
     }
 
     return Array.from(detected);
@@ -164,19 +207,19 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
   const simulateScan = useCallback(async (imageUrl: string) => {
     setStep('scanning');
     setScanProgress(0);
-    
+
     const statuses = sweetsMode ? [
-      'جاري تحليل الصورة...',
-      'البحث عن الطحين والسكر...',
-      'اكتشاف المكسرات...',
-      'التعرف على التوابل الحلوة...',
-      'تجميع مكونات الحلويات...'
+      'جاري تحليل الصورة... 🔍',
+      'البحث عن الطحين والسكر... 🌾',
+      'اكتشاف المكسرات... 🥜',
+      'التعرف على التوابل الحلوة... 🌸',
+      'تجميع مكونات الحلويات... 🍪'
     ] : [
-      'جاري تحليل الصورة...',
-      'البحث عن الخضروات...',
-      'التعرف على البروتينات...',
-      'اكتشاف التوابل...',
-      'تجميع النتائج...'
+      'جاري تحليل الصورة... 🔍',
+      'البحث عن الخضروات... 🥬',
+      'التعرف على البروتينات... 🍗',
+      'اكتشاف التوابل... 🌿',
+      'تجميع النتائج... ✅'
     ];
 
     for (let i = 0; i <= 100; i += 2) {
@@ -222,19 +265,25 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
   }, [analyzeImageColors, sweetsMode]);
 
   const capturePhoto = useCallback(() => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0);
-        const imageUrl = canvas.toDataURL('image/jpeg');
-        setCapturedImage(imageUrl);
-        stopCamera();
-        simulateScan(imageUrl);
-      }
+    if (!videoRef.current || !canvasRef.current) return;
+    
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    // Use actual video dimensions
+    const vw = video.videoWidth || video.clientWidth;
+    const vh = video.videoHeight || video.clientHeight;
+    
+    canvas.width = vw;
+    canvas.height = vh;
+    
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, vw, vh);
+      const imageUrl = canvas.toDataURL('image/jpeg', 0.8);
+      setCapturedImage(imageUrl);
+      stopCamera();
+      simulateScan(imageUrl);
     }
   }, [stopCamera, simulateScan]);
 
@@ -272,14 +321,21 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
   const handleRescan = () => {
     setCapturedImage(null);
     setDetectedIngredients([]);
+    setCameraError(null);
+    setCameraReady(false);
     setStep('choose');
+  };
+
+  const handleBack = () => {
+    stopCamera();
+    onBack();
   };
 
   const filteredIngredients = ingredientsList.filter(
     ing => ing.includes(searchQuery) && !detectedIngredients.includes(ing)
   );
 
-  const headerGradient = sweetsMode 
+  const headerGradient = sweetsMode
     ? 'bg-gradient-to-l from-pink-600 via-purple-600 to-pink-700'
     : 'bg-gradient-to-l from-red-700 via-red-600 to-green-700';
 
@@ -296,20 +352,20 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
       {/* Header */}
       <header className={`${headerGradient} text-white py-4 px-6 shadow-lg`}>
         <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <button onClick={onBack} className="flex items-center gap-2 hover:opacity-80 transition">
+          <button onClick={handleBack} className="flex items-center gap-2 hover:opacity-80 transition">
             <ArrowRight className="w-6 h-6" />
             <span>رجوع</span>
           </button>
           <h1 className="text-xl font-bold flex items-center gap-2">
             {sweetsMode && <Cookie className="w-6 h-6" />}
-            {sweetsMode ? 'ماسح مكونات الحلويات 🍪' : 'ماسح الثلاجة'}
+            {sweetsMode ? 'ماسح مكونات الحلويات 🍪' : 'ماسح الثلاجة 📸'}
           </h1>
           <div className="w-20"></div>
         </div>
       </header>
 
-      <div className="max-w-2xl mx-auto p-6">
-        {/* Choose Method */}
+      <div className="max-w-2xl mx-auto p-4 sm:p-6">
+        {/* Step 1: Choose Method */}
         {step === 'choose' && (
           <div className="space-y-6">
             <div className="text-center mb-8">
@@ -324,34 +380,34 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
                 {sweetsMode ? 'صوّر مكونات الحلويات' : 'صوّر ما عندك'}
               </h2>
               <p className="text-gray-600 mt-2">
-                {sweetsMode 
+                {sweetsMode
                   ? 'التقط صورة للمكونات (طحين، سكر، لوز...) لاقتراح حلويات مغربية'
-                  : 'التقط صورة لثلاجتك أو ارفع صورة من جهازك'
-                }
+                  : 'التقط صورة لثلاجتك أو ارفع صورة من جهازك'}
               </p>
             </div>
 
             <div className="grid gap-4">
               <button
                 onClick={startCamera}
-                className={`flex items-center justify-center gap-3 ${buttonGradient} text-white py-4 px-6 rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-[1.02]`}
+                className={`flex items-center justify-center gap-3 ${buttonGradient} text-white py-5 px-6 rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition-all active:scale-95`}
               >
-                <Camera className="w-6 h-6" />
-                <span>فتح الكاميرا</span>
+                <Camera className="w-7 h-7" />
+                <span>📸 فتح الكاميرا</span>
               </button>
 
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center justify-center gap-3 bg-white text-gray-700 py-4 px-6 rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition-all border-2 border-gray-200 hover:border-orange-300"
+                className="flex items-center justify-center gap-3 bg-white text-gray-700 py-5 px-6 rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition-all border-2 border-gray-200 hover:border-orange-300 active:scale-95"
               >
-                <Upload className="w-6 h-6" />
-                <span>رفع صورة</span>
+                <Upload className="w-7 h-7" />
+                <span>📁 رفع صورة من الجهاز</span>
               </button>
 
               <input
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                capture="environment"
                 onChange={handleFileUpload}
                 className="hidden"
               />
@@ -360,19 +416,18 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
             <div className="text-center">
               <button
                 onClick={onGoToManual}
-                className={`${sweetsMode ? 'text-pink-600 hover:text-pink-700' : 'text-orange-600 hover:text-orange-700'} font-medium`}
+                className={`${sweetsMode ? 'text-pink-600 hover:text-pink-700' : 'text-orange-600 hover:text-orange-700'} font-medium text-lg`}
               >
-                أو اختر المكونات يدوياً ←
+                ✋ أو اختر المكونات يدوياً
               </button>
             </div>
 
-            {/* Quick select sweets ingredients */}
             {sweetsMode && (
               <div className="bg-white rounded-2xl p-4 shadow-lg">
                 <h3 className="font-bold text-gray-800 mb-3">🍬 مكونات الحلويات الشائعة:</h3>
                 <div className="flex flex-wrap gap-2">
                   {['طحين', 'سكر', 'لوز', 'عسل', 'بيض', 'زبدة', 'سمسم', 'قرفة'].map((ing) => (
-                    <span key={ing} className="bg-pink-100 text-pink-700 px-3 py-1 rounded-full text-sm">
+                    <span key={ing} className="bg-pink-100 text-pink-700 px-3 py-1.5 rounded-full text-sm font-medium">
                       {ing}
                     </span>
                   ))}
@@ -382,56 +437,115 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
           </div>
         )}
 
-        {/* Camera View */}
+        {/* Step 2: Camera View */}
         {step === 'camera' && (
           <div className="space-y-4">
-            <div className="relative rounded-2xl overflow-hidden shadow-2xl">
+            <div className="relative rounded-2xl overflow-hidden shadow-2xl bg-black" style={{ minHeight: '300px' }}>
+              {/* Loading state */}
+              {!cameraReady && !cameraError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-20">
+                  <div className="animate-spin w-12 h-12 border-4 border-white border-t-transparent rounded-full mb-4"></div>
+                  <p className="text-white text-lg font-bold">جاري تشغيل الكاميرا... 📸</p>
+                  <p className="text-gray-400 text-sm mt-2">يرجى السماح بالوصول للكاميرا</p>
+                </div>
+              )}
+
+              {/* Error state */}
+              {cameraError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-20 p-6">
+                  <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
+                    <X className="w-8 h-8 text-red-400" />
+                  </div>
+                  <p className="text-white text-lg font-bold text-center mb-2">⚠️ خطأ في الكاميرا</p>
+                  <p className="text-gray-400 text-sm text-center mb-6">{cameraError}</p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => { stopCamera(); startCamera(); }}
+                      className="bg-orange-500 text-white px-6 py-3 rounded-xl font-bold"
+                    >
+                      🔄 إعادة المحاولة
+                    </button>
+                    <button
+                      onClick={() => { stopCamera(); fileInputRef.current?.click(); }}
+                      className="bg-white text-gray-800 px-6 py-3 rounded-xl font-bold"
+                    >
+                      📁 رفع صورة
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Video element */}
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
-                className="w-full aspect-[4/3] object-cover bg-black"
+                muted
+                style={{ width: '100%', height: 'auto', minHeight: '300px', objectFit: 'cover', display: 'block' }}
               />
-              <div className="absolute inset-0 pointer-events-none">
-                <div className={`absolute top-4 right-4 w-16 h-16 border-t-4 border-r-4 ${sweetsMode ? 'border-pink-400/70' : 'border-white/70'} rounded-tr-lg`}></div>
-                <div className={`absolute top-4 left-4 w-16 h-16 border-t-4 border-l-4 ${sweetsMode ? 'border-pink-400/70' : 'border-white/70'} rounded-tl-lg`}></div>
-                <div className={`absolute bottom-4 right-4 w-16 h-16 border-b-4 border-r-4 ${sweetsMode ? 'border-pink-400/70' : 'border-white/70'} rounded-br-lg`}></div>
-                <div className={`absolute bottom-4 left-4 w-16 h-16 border-b-4 border-l-4 ${sweetsMode ? 'border-pink-400/70' : 'border-white/70'} rounded-bl-lg`}></div>
-              </div>
-              <div className="absolute bottom-8 right-1/2 translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
-                {sweetsMode ? 'صوّر مكونات الحلويات 🍪' : 'وجّه الكاميرا نحو ثلاجتك 📸'}
-              </div>
+
+              {/* Camera guides overlay */}
+              {cameraReady && (
+                <div className="absolute inset-0 pointer-events-none">
+                  <div className={`absolute top-4 right-4 w-16 h-16 border-t-4 border-r-4 ${sweetsMode ? 'border-pink-400' : 'border-green-400'} rounded-tr-lg`}></div>
+                  <div className={`absolute top-4 left-4 w-16 h-16 border-t-4 border-l-4 ${sweetsMode ? 'border-pink-400' : 'border-green-400'} rounded-tl-lg`}></div>
+                  <div className={`absolute bottom-4 right-4 w-16 h-16 border-b-4 border-r-4 ${sweetsMode ? 'border-pink-400' : 'border-green-400'} rounded-br-lg`}></div>
+                  <div className={`absolute bottom-4 left-4 w-16 h-16 border-b-4 border-l-4 ${sweetsMode ? 'border-pink-400' : 'border-green-400'} rounded-bl-lg`}></div>
+                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded-full text-sm font-medium">
+                    {sweetsMode ? '🍪 صوّر مكونات الحلويات' : '📸 وجّه الكاميرا نحو ثلاجتك'}
+                  </div>
+                </div>
+              )}
             </div>
 
+            {/* Camera action buttons */}
             <div className="flex gap-4">
               <button
                 onClick={() => { stopCamera(); setStep('choose'); }}
-                className="flex-1 flex items-center justify-center gap-2 bg-gray-200 text-gray-700 py-3 px-6 rounded-xl font-bold"
+                className="flex-1 flex items-center justify-center gap-2 bg-gray-200 text-gray-700 py-4 px-6 rounded-xl font-bold text-lg active:scale-95 transition"
               >
-                <X className="w-5 h-5" />
+                <X className="w-6 h-6" />
                 إلغاء
               </button>
               <button
                 onClick={capturePhoto}
-                className={`flex-1 flex items-center justify-center gap-2 ${buttonGradient} text-white py-3 px-6 rounded-xl font-bold shadow-lg`}
+                disabled={!cameraReady}
+                className={`flex-1 flex items-center justify-center gap-2 ${buttonGradient} text-white py-4 px-6 rounded-xl font-bold text-lg shadow-lg active:scale-95 transition disabled:opacity-50`}
               >
-                <Camera className="w-5 h-5" />
-                التقاط
+                <Camera className="w-6 h-6" />
+                📸 التقاط
               </button>
             </div>
+
+            {/* Also allow file upload from camera view */}
+            <button
+              onClick={() => { stopCamera(); fileInputRef.current?.click(); }}
+              className="w-full text-center text-orange-600 font-medium py-2"
+            >
+              📁 أو ارفع صورة من الجهاز
+            </button>
+
             <canvas ref={canvasRef} className="hidden" />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
           </div>
         )}
 
-        {/* Scanning Animation */}
+        {/* Step 3: Scanning Animation */}
         {step === 'scanning' && capturedImage && (
           <div className="space-y-6">
             <div className="relative rounded-2xl overflow-hidden shadow-2xl">
-              <img src={capturedImage} alt="صورة ملتقطة" className="w-full aspect-[4/3] object-cover" />
+              <img src={capturedImage} alt="صورة ملتقطة للمسح" className="w-full aspect-[4/3] object-cover" />
               <div className={`absolute inset-0 bg-gradient-to-b from-transparent ${sweetsMode ? 'via-pink-500/20' : 'via-orange-500/20'} to-transparent animate-pulse`}></div>
-              <div 
-                className={`absolute top-0 right-0 left-0 h-1 ${sweetsMode ? 'bg-gradient-to-l from-pink-500 to-purple-500' : 'bg-gradient-to-l from-red-500 to-orange-500'}`}
-                style={{ 
+              <div
+                className={`absolute right-0 left-0 h-1 ${sweetsMode ? 'bg-gradient-to-l from-pink-500 to-purple-500' : 'bg-gradient-to-l from-red-500 to-orange-500'}`}
+                style={{
                   top: `${scanProgress}%`,
                   boxShadow: sweetsMode ? '0 0 20px rgba(219, 39, 119, 0.8)' : '0 0 20px rgba(234, 88, 12, 0.8)'
                 }}
@@ -444,11 +558,11 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
 
             <div className="bg-white rounded-2xl p-6 shadow-lg">
               <div className="flex items-center justify-between mb-4">
-                <span className="text-gray-600">{scanStatus}</span>
-                <span className={`font-bold ${sweetsMode ? 'text-pink-600' : 'text-orange-600'}`}>{scanProgress}%</span>
+                <span className="text-gray-600 font-medium">{scanStatus}</span>
+                <span className={`font-bold text-lg ${sweetsMode ? 'text-pink-600' : 'text-orange-600'}`}>{scanProgress}%</span>
               </div>
-              <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
-                <div 
+              <div className="w-full h-4 bg-gray-200 rounded-full overflow-hidden">
+                <div
                   className={`h-full ${sweetsMode ? 'bg-gradient-to-l from-pink-500 to-purple-500' : 'bg-gradient-to-l from-red-500 to-orange-500'} transition-all duration-100 rounded-full`}
                   style={{ width: `${scanProgress}%` }}
                 ></div>
@@ -457,16 +571,16 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
           </div>
         )}
 
-        {/* Results */}
+        {/* Step 4: Results */}
         {step === 'results' && capturedImage && (
           <div className="space-y-6">
             <div className="relative rounded-2xl overflow-hidden shadow-xl">
-              <img src={capturedImage} alt="صورة ملتقطة" className="w-full aspect-[4/3] object-cover" />
+              <img src={capturedImage} alt="صورة ملتقطة - نتائج المسح" className="w-full aspect-[4/3] object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
               <div className="absolute bottom-4 right-4 left-4">
                 <div className="flex items-center gap-2 text-white">
                   <Check className="w-6 h-6 text-green-400" />
-                  <span className="font-bold">تم اكتشاف {detectedIngredients.length} مكون {sweetsMode ? '🍪' : ''}</span>
+                  <span className="font-bold text-lg">✅ تم اكتشاف {detectedIngredients.length} مكون {sweetsMode ? '🍪' : ''}</span>
                 </div>
               </div>
             </div>
@@ -474,19 +588,19 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
             <div className="bg-white rounded-2xl p-6 shadow-lg">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-gray-800 text-lg">
-                  {sweetsMode ? '🍬 مكونات الحلويات المكتشفة' : 'المكونات المكتشفة'}
+                  {sweetsMode ? '🍬 مكونات الحلويات المكتشفة' : '🥕 المكونات المكتشفة'}
                 </h3>
                 <button
                   onClick={() => setShowAddIngredient(!showAddIngredient)}
-                  className={`flex items-center gap-1 ${sweetsMode ? 'text-pink-600 hover:text-pink-700' : 'text-orange-600 hover:text-orange-700'} font-medium text-sm`}
+                  className={`flex items-center gap-1 ${sweetsMode ? 'text-pink-600 hover:text-pink-700' : 'text-orange-600 hover:text-orange-700'} font-medium`}
                 >
-                  <Plus className="w-4 h-4" />
-                  إضافة
+                  <Plus className="w-5 h-5" />
+                  إضافة مكون
                 </button>
               </div>
 
               {showAddIngredient && (
-                <div className="mb-4 space-y-2">
+                <div className="mb-4 space-y-2 border-2 border-gray-100 rounded-xl p-3">
                   <div className="relative">
                     <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input
@@ -494,17 +608,17 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder={sweetsMode ? 'ابحث عن مكون حلويات...' : 'ابحث عن مكون...'}
-                      className={`w-full pr-10 pl-4 py-2 border-2 border-gray-200 rounded-xl focus:${sweetsMode ? 'border-pink-400' : 'border-orange-400'} focus:outline-none`}
+                      className="w-full pr-10 pl-4 py-3 border-2 border-gray-200 rounded-xl focus:border-orange-400 focus:outline-none text-lg"
                     />
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-1">
-                    {filteredIngredients.slice(0, 10).map((ing: string, i: number) => (
+                    {filteredIngredients.slice(0, 15).map((ing: string, i: number) => (
                       <button
                         key={i}
                         onClick={() => addIngredient(ing)}
-                        className={`w-full text-right px-3 py-2 rounded-lg ${sweetsMode ? 'hover:bg-pink-50' : 'hover:bg-orange-50'} text-gray-700`}
+                        className={`w-full text-right px-4 py-3 rounded-lg ${sweetsMode ? 'hover:bg-pink-50' : 'hover:bg-orange-50'} text-gray-700 font-medium transition`}
                       >
-                        {ing}
+                        + {ing}
                       </button>
                     ))}
                   </div>
@@ -515,12 +629,12 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
                 {detectedIngredients.map((ingredient: string, index: number) => (
                   <span
                     key={index}
-                    className={`group relative bg-gradient-to-l ${tagGradient} px-4 py-2 rounded-full font-medium flex items-center gap-2`}
+                    className={`group relative bg-gradient-to-l ${tagGradient} px-4 py-2.5 rounded-full font-medium flex items-center gap-2 text-base`}
                   >
                     {ingredient}
                     <button
                       onClick={() => removeIngredient(ingredient)}
-                      className="w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition"
+                      className="w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-sm hover:bg-red-600 transition"
                     >
                       ×
                     </button>
@@ -533,25 +647,25 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
               <button
                 onClick={handleFindRecipes}
                 disabled={detectedIngredients.length === 0}
-                className={`flex items-center justify-center gap-3 ${buttonGradient} text-white py-4 px-6 rounded-2xl font-bold text-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
+                className={`flex items-center justify-center gap-3 ${buttonGradient} text-white py-5 px-6 rounded-2xl font-bold text-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95`}
               >
-                {sweetsMode ? <Cookie className="w-6 h-6" /> : <span>🇲🇦</span>}
-                <span>{sweetsMode ? 'ابحث عن وصفات حلويات مغربية 🍪' : 'ابحث عن وصفات مغربية'}</span>
+                {sweetsMode ? <Cookie className="w-7 h-7" /> : <span className="text-2xl">🇲🇦</span>}
+                <span>{sweetsMode ? 'ابحث عن وصفات حلويات مغربية 🍪' : 'ابحث عن وصفات مغربية 🍲'}</span>
               </button>
 
               <div className="flex gap-3">
                 <button
                   onClick={handleRescan}
-                  className="flex-1 flex items-center justify-center gap-2 bg-white text-gray-700 py-3 px-4 rounded-xl font-bold border-2 border-gray-200 hover:border-orange-300"
+                  className="flex-1 flex items-center justify-center gap-2 bg-white text-gray-700 py-4 px-4 rounded-xl font-bold border-2 border-gray-200 hover:border-orange-300 active:scale-95 transition"
                 >
                   <RotateCcw className="w-5 h-5" />
-                  إعادة المسح
+                  🔄 إعادة المسح
                 </button>
                 <button
                   onClick={onGoToManual}
-                  className="flex-1 flex items-center justify-center gap-2 bg-white text-gray-700 py-3 px-4 rounded-xl font-bold border-2 border-gray-200 hover:border-orange-300"
+                  className="flex-1 flex items-center justify-center gap-2 bg-white text-gray-700 py-4 px-4 rounded-xl font-bold border-2 border-gray-200 hover:border-orange-300 active:scale-95 transition"
                 >
-                  تعديل يدوي
+                  ✋ تعديل يدوي
                 </button>
               </div>
             </div>
