@@ -64,8 +64,8 @@ export function Hero({ onStartScan, onManualPick, onSweetsMode, onNavigate }: He
             صور ما في ثلاجتك أو اختر المكونات يدوياً، وسنقترح عليك أشهى الوصفات المغربية التقليدية
           </p>
 
-          {/* Health Profile Card */}
-          {profile ? (
+          {/* Health Profile Card - ONLY SHOW WHEN LOGGED IN */}
+          {user && profile && (
             <div className="bg-white rounded-2xl shadow-lg p-4 mb-6 border-2 border-emerald-200 mx-auto max-w-md">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center">
@@ -87,7 +87,10 @@ export function Hero({ onStartScan, onManualPick, onSweetsMode, onNavigate }: He
                 <button onClick={handleHealthClick} className="text-emerald-600 hover:text-emerald-700 text-xs font-bold underline">تعديل</button>
               </div>
             </div>
-          ) : (
+          )}
+
+          {/* Show "Add Health Profile" button - ONLY WHEN LOGGED IN BUT NO PROFILE */}
+          {user && !profile && (
             <button onClick={handleHealthClick}
               className="bg-gradient-to-l from-emerald-500 to-teal-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg hover:shadow-xl transition-all hover:scale-105 mb-6 flex items-center gap-3 mx-auto">
               <Activity className="w-5 h-5" />
