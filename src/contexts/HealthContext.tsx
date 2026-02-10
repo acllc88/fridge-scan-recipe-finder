@@ -24,6 +24,7 @@ interface HealthContextType {
   getHealthWarnings: (recipeCalories: number, recipeName: string, ingredients: string[]) => HealthWarning[];
   getHealthScore: (recipeCalories: number, ingredients: string[]) => number;
   getAgeGroup: () => string;
+  isLoading: boolean;
 }
 
 export interface HealthWarning {
@@ -99,44 +100,109 @@ export { HEALTH_CONDITIONS };
 export function HealthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfileState] = useState<HealthProfile | null>(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const { user } = useAuth();
 
-  // Load from localStorage on mount
+  // Load health profile when user logs in
   useEffect(() => {
-    const saved = localStorage.getItem('healthProfile');
-    if (saved) {
-      try { setProfileState(JSON.parse(saved)); } catch {}
-    }
-  }, []);
-
-  // Sync with Firebase when logged in
-  useEffect(() => {
-    if (!user) return;
-    const loadFromFirebase = async () => {
-      try {
-        const docRef = doc(db, 'users', user.uid);
-        const snap = await getDoc(docRef);
-        if (snap.exists() && snap.data().healthProfile) {
-          const fbProfile = snap.data().healthProfile;
-          setProfileState(fbProfile);
-          localStorage.setItem('healthProfile', JSON.stringify(fbProfile));
+    const loadHealthProfile = async () => {
+      setIsLoading(true);
+      
+      if (user) {
+        // User is logged in - load from Firebase
+        console.log('📥 Loading health profile from Firebase for user:', user.uid);
+        try {
+          const docRef = doc(db, 'users', user.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            console.log('📄 Firebase document data:', data);
+            
+            if (data.healthProfile) {
+              console.log('✅ Health profile found in Firebase:', data.healthProfile);
+              setProfileState(data.healthProfile);
+              localStorage.setItem('healthProfile', JSON.stringify(data.healthProfile));
+            } else {
+              console.log('⚠️ No health profile in Firebase document');
+              // Check localStorage as fallback
+              const localProfile = localStorage.getItem('healthProfile');
+              if (localProfile) {
+                const parsed = JSON.parse(localProfile);
+                console.log('📦 Using localStorage profile and syncing to Firebase:', parsed);
+                setProfileState(parsed);
+                // Sync to Firebase
+                await setDoc(docRef, { healthProfile: parsed }, { merge: true });
+              } else {
+                setProfileState(null);
+              }
+            }
+          } else {
+            console.log('⚠️ No Firebase document exists for user');
+            // Check localStorage and create Firebase doc if exists
+            const localProfile = localStorage.getItem('healthProfile');
+            if (localProfile) {
+              const parsed = JSON.parse(localProfile);
+              console.log('📦 Creating Firebase doc from localStorage:', parsed);
+              setProfileState(parsed);
+              await setDoc(docRef, { healthProfile: parsed }, { merge: true });
+            } else {
+              setProfileState(null);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error loading health profile from Firebase:', error);
+          // Fallback to localStorage
+          const localProfile = localStorage.getItem('healthProfile');
+          if (localProfile) {
+            try {
+              setProfileState(JSON.parse(localProfile));
+            } catch {
+              setProfileState(null);
+            }
+          }
         }
-      } catch {}
+      } else {
+        // User logged out - clear profile
+        console.log('🚪 User logged out - clearing health profile');
+        setProfileState(null);
+        localStorage.removeItem('healthProfile');
+      }
+      
+      setIsLoading(false);
     };
-    loadFromFirebase();
+
+    loadHealthProfile();
   }, [user]);
 
-  const setProfile = async (p: HealthProfile) => {
-    setProfileState(p);
-    localStorage.setItem('healthProfile', JSON.stringify(p));
+  // Save health profile
+  const setProfile = async (newProfile: HealthProfile) => {
+    console.log('💾 Saving health profile:', newProfile);
+    
+    // Update local state immediately
+    setProfileState(newProfile);
+    
+    // Save to localStorage
+    localStorage.setItem('healthProfile', JSON.stringify(newProfile));
+    
+    // Save to Firebase if logged in
     if (user) {
       try {
-        await setDoc(doc(db, 'users', user.uid), { healthProfile: p }, { merge: true });
-      } catch {}
+        const docRef = doc(db, 'users', user.uid);
+        await setDoc(docRef, { healthProfile: newProfile }, { merge: true });
+        console.log('✅ Health profile saved to Firebase successfully');
+      } catch (error) {
+        console.error('❌ Error saving health profile to Firebase:', error);
+        alert('حدث خطأ في حفظ الملف الصحي. يرجى المحاولة مرة أخرى.');
+      }
+    } else {
+      console.log('⚠️ User not logged in - profile saved to localStorage only');
     }
   };
 
+  // Clear health profile
   const clearProfile = () => {
+    console.log('🗑️ Clearing health profile');
     setProfileState(null);
     localStorage.removeItem('healthProfile');
   };
@@ -167,8 +233,8 @@ export function HealthProvider({ children }: { children: ReactNode }) {
     if (goal === 'gain') tdee += 400;
 
     // Age adjustments
-    if (age < 18) tdee *= 1.1; // Growing teens need more
-    if (age > 60) tdee *= 0.9; // Seniors need less
+    if (age < 18) tdee *= 1.1;
+    if (age > 60) tdee *= 0.9;
 
     return Math.round(tdee);
   };
@@ -190,7 +256,6 @@ export function HealthProvider({ children }: { children: ReactNode }) {
     const dailyCals = getDailyCalories();
     const mealCals = dailyCals / 3;
 
-    // Calorie warnings based on age
     if (recipeCalories > mealCals * 1.5) {
       warnings.push({
         type: 'warning',
@@ -207,7 +272,6 @@ export function HealthProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    // Age-specific warnings
     if (profile.age < 12) {
       warnings.push({
         type: 'info',
@@ -231,7 +295,6 @@ export function HealthProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    // Health condition warnings
     const ingredientStr = ingredients.join(' ').toLowerCase();
     
     for (const condKey of profile.conditions) {
@@ -257,7 +320,6 @@ export function HealthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Goal-based warnings
     if (profile.goal === 'lose' && recipeCalories > 400) {
       warnings.push({
         type: 'warning',
@@ -286,11 +348,9 @@ export function HealthProvider({ children }: { children: ReactNode }) {
     const mealCals = dailyCals / 3;
     const ingredientStr = ingredients.join(' ').toLowerCase();
 
-    // Calorie score
     if (recipeCalories > mealCals * 2) score -= 30;
     else if (recipeCalories > mealCals * 1.5) score -= 15;
 
-    // Health condition score
     for (const condKey of profile.conditions) {
       const cond = HEALTH_CONDITIONS[condKey as keyof typeof HEALTH_CONDITIONS];
       if (!cond) continue;
@@ -312,6 +372,7 @@ export function HealthProvider({ children }: { children: ReactNode }) {
       getHealthWarnings,
       getHealthScore,
       getAgeGroup,
+      isLoading,
     }}>
       {children}
     </HealthContext.Provider>

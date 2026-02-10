@@ -1,20 +1,44 @@
-import { useState } from 'react';
-import { X, Heart, Activity, ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Heart, Activity, ChevronLeft, ChevronRight, Check, Loader2 } from 'lucide-react';
 import { useHealth, HEALTH_CONDITIONS, HealthProfile } from '../contexts/HealthContext';
 
 export default function HealthProfileModal() {
-  const { profile, setProfile, showProfileModal, setShowProfileModal } = useHealth();
+  const { profile, setProfile, showProfileModal, setShowProfileModal, isLoading } = useHealth();
   const [step, setStep] = useState(1);
+  const [isSaving, setIsSaving] = useState(false);
   const totalSteps = 4;
 
-  const [age, setAge] = useState(profile?.age || 30);
-  const [gender, setGender] = useState<'male' | 'female'>(profile?.gender || 'male');
-  const [weight, setWeight] = useState(profile?.weight || 70);
-  const [height, setHeight] = useState(profile?.height || 170);
-  const [conditions, setConditions] = useState<string[]>(profile?.conditions || []);
-  const [allergies, setAllergies] = useState<string[]>(profile?.allergies || []);
-  const [activityLevel, setActivityLevel] = useState<HealthProfile['activityLevel']>(profile?.activityLevel || 'moderate');
-  const [goal, setGoal] = useState<HealthProfile['goal']>(profile?.goal || 'maintain');
+  // Form state - initialize from profile or defaults
+  const [age, setAge] = useState(30);
+  const [gender, setGender] = useState<'male' | 'female'>('male');
+  const [weight, setWeight] = useState(70);
+  const [height, setHeight] = useState(170);
+  const [conditions, setConditions] = useState<string[]>([]);
+  const [allergies, setAllergies] = useState<string[]>([]);
+  const [activityLevel, setActivityLevel] = useState<HealthProfile['activityLevel']>('moderate');
+  const [goal, setGoal] = useState<HealthProfile['goal']>('maintain');
+
+  // Update form when profile loads from Firebase
+  useEffect(() => {
+    if (profile) {
+      console.log('📋 Loading profile into form:', profile);
+      setAge(profile.age || 30);
+      setGender(profile.gender || 'male');
+      setWeight(profile.weight || 70);
+      setHeight(profile.height || 170);
+      setConditions(profile.conditions || []);
+      setAllergies(profile.allergies || []);
+      setActivityLevel(profile.activityLevel || 'moderate');
+      setGoal(profile.goal || 'maintain');
+    }
+  }, [profile]);
+
+  // Reset to step 1 when modal opens
+  useEffect(() => {
+    if (showProfileModal) {
+      setStep(1);
+    }
+  }, [showProfileModal]);
 
   if (!showProfileModal) return null;
 
@@ -26,9 +50,16 @@ export default function HealthProfileModal() {
     setAllergies(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]);
   };
 
-  const handleSave = () => {
-    setProfile({ age, gender, weight, height, conditions, allergies, activityLevel, goal });
-    setShowProfileModal(false);
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await setProfile({ age, gender, weight, height, conditions, allergies, activityLevel, goal });
+      setShowProfileModal(false);
+    } catch (error) {
+      console.error('Error saving profile:', error);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const allergyOptions = [
@@ -55,6 +86,18 @@ export default function HealthProfileModal() {
     { id: 'maintain', label: 'الحفاظ على الوزن', desc: 'سعرات متوازنة', icon: '⚖️', color: 'bg-green-100 border-green-400 text-green-800' },
     { id: 'gain', label: 'زيادة الوزن', desc: 'زيادة السعرات والبروتين', icon: '📈', color: 'bg-orange-100 border-orange-400 text-orange-800' },
   ];
+
+  // Show loading state while fetching profile from Firebase
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl p-8 text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-emerald-600 mx-auto mb-4" />
+          <p className="text-gray-700 font-semibold">جاري تحميل ملفك الصحي...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowProfileModal(false)}>
@@ -332,9 +375,18 @@ export default function HealthProfileModal() {
               <ChevronLeft size={18} />
             </button>
           ) : (
-            <button onClick={handleSave} className="flex-1 py-3 px-4 rounded-xl bg-emerald-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition">
-              <Check size={18} />
-              حفظ الملف الصحي
+            <button onClick={handleSave} disabled={isSaving} className="flex-1 py-3 px-4 rounded-xl bg-emerald-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition disabled:opacity-50">
+              {isSaving ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  جاري الحفظ...
+                </>
+              ) : (
+                <>
+                  <Check size={18} />
+                  حفظ الملف الصحي
+                </>
+              )}
             </button>
           )}
         </div>

@@ -78,19 +78,19 @@ function MainApp() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50 relative">
-      {/* User Menu - always visible */}
-      {currentView !== 'privacy' && currentView !== 'terms' && (
-        <div className="absolute top-4 left-4 sm:left-6 z-40">
-          <UserMenu onNavigate={handleNavigate} />
-        </div>
-      )}
-
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50">
       {/* Auth Modal */}
       <AuthModal isOpen={isOpen} onClose={closeAuthModal} />
       
       {/* Health Profile Modal */}
       <HealthProfileModal />
+
+      {/* User Menu for non-home pages */}
+      {currentView !== 'home' && currentView !== 'privacy' && currentView !== 'terms' && (
+        <div className="fixed top-4 left-4 z-50">
+          <UserMenu onNavigate={handleNavigate} />
+        </div>
+      )}
 
       {currentView === 'home' && (
         <Hero 

@@ -407,7 +407,6 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 onChange={handleFileUpload}
                 className="hidden"
               />
@@ -526,14 +525,6 @@ export function ImageScanner({ onScanComplete, onBack, onGoToManual, sweetsMode 
             </button>
 
             <canvas ref={canvasRef} className="hidden" />
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
           </div>
         )}
 
